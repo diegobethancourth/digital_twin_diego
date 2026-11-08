@@ -59,4 +59,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     print(f"Twin:  http://localhost:{args.port}/")
     print(f"Agent: {AGENT}  (proxied at /mtc)")
-    http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+    try:
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    except OSError:
+        # Port busy: usually the server is already running (Codespaces starts it automatically)
+        print(f"\nPort {args.port} is already in use, so the server is probably already running.")
+        print(f"Just open http://localhost:{args.port}/  (in Codespaces: Ports tab -> globe icon on {args.port})")
+        print(f"Or start another one with: python serve.py --port {args.port + 1}")
+        raise SystemExit(1)
+    server.serve_forever()
