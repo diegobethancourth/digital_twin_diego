@@ -1,63 +1,51 @@
 # digital_twin_diego
 
-**Reusable three-axis CNC digital twin (OKUMA and MAZAK)**: MFG 598 Industrial IoT, Arizona State University.
+Digital Twin OKUMA and MAZAK, MFG 598 Industrial IoT (ASU)
 
-A web page that reads live MTConnect data from the [Metalogi demo agent](https://demo.metalogi.io/) and animates a 3D machine. It does not hard-code device names, data-item ids or axis names. Everything comes from the agent's machine description (`/probe`).
+This is our digital twin for the CNC assignment. The page connects to the Metalogi demo agent (https://demo.metalogi.io), reads the MTConnect data and moves a 3D machine with the real positions. We did not write any machine names or ids in the code: the page reads them from the probe.
 
 ## Files
 
-| File | What it does |
-|---|---|
-| `index.html` | The digital twin: discovery tables, 3D model, live data |
-| `serve.py` | Small local server. It shows the page and forwards `/mtc/...` to the agent |
-| `start_twin.bat` | Windows shortcut: double-click to start the server and open the browser |
+- `index.html` is the digital twin page
+- `serve.py` is a small Python server that sends the agent data to the page
+- `start_twin.bat` starts everything on Windows with a double-click
 
-## How to run
+## How to run it
 
-You only need **Python 3**, with no extra packages.
+### Option 1: on your computer (Python 3)
 
-**Windows**
-1. Download the repo (green **Code** button → *Download ZIP*) and unzip it, or `git clone` it.
-2. Double-click `start_twin.bat`.
+1. Download the repo (Code → Download ZIP) and unzip it.
+2. Double-click `start_twin.bat`, or open PowerShell in the folder and type:
 
-   Or, in PowerShell inside the folder:
-   ```powershell
-   python serve.py        # if "python" does not work, use: py serve.py
    ```
-3. Open <http://localhost:8000/?device=Mazak> (or `?device=OKUMA`).
-4. Keep the window open while you use the twin. Press **Ctrl + C** to stop it.
+   python serve.py
+   ```
 
-**Mac / Linux**
-```bash
-python3 serve.py
-# then open http://localhost:8000/?device=Mazak
-```
+   (if `python` does not work, try `py serve.py`, or `python3 serve.py` on Mac)
+3. Open http://localhost:8000/?device=Mazak in the browser (or `?device=OKUMA`).
+4. Leave the window open. To stop it, press Ctrl + C.
 
-**Options**
-```bash
-python serve.py --port 8080                      # if port 8000 is busy
-python serve.py --agent http://<agent-ip>:5000   # use another MTConnect agent
-```
+### Option 2: from GitHub (Codespaces, nothing to install)
 
-> Why a server? The demo agent does not allow web pages from other sites to read its data (no CORS headers). `serve.py` serves the page and the agent data from the same address, so the browser accepts it.
+1. In this repo, click Code → Codespaces → Create codespace on main.
+2. Wait about a minute. The server starts by itself and the twin opens in a new tab.
+3. If the tab does not open, go to the Ports tab and click the globe icon on port 8000.
 
-## Using the page
+## Why we need serve.py
 
-- **Device list**: every device found in `/probe`.
-- **View: solid model from probe**: loads the CAD file that the agent declares, as in the Metalogi demo. Each axis moves its own part.
-- **View: simplified 5-axis**: block model with 3 linear axes, 2 rotary axes and a spindle. It works with any agent, even one without a CAD file.
-- **Axis mapping**: choose which axis drives each slot of the simplified model.
-- **Motion scale**: amplify small movements, or show them at true scale.
+The demo agent does not let other websites read its data (no CORS). So the page cannot work alone on GitHub Pages. `serve.py` gets the data from the agent and gives it to the page from the same address, and then the browser accepts it.
 
-## How it meets the assignment
+## What the page does
 
-| Requirement | How we did it |
-|---|---|
-| **Discover the machine** | Reads `/probe`. It lists every Linear and Rotary axis with its position data item, units, coordinate system, direction vector (`Motion/Axis`) and parent axis. |
-| **Visualize motion** | Reads `/current`, then `/sample` every 200 ms. Linear axes slide along their direction and rotary axes turn. Each axis rides on its parent axis. |
-| **No machine-specific assumptions** | Positions come from the data-item type (`POSITION` / `ANGLE`, subtype `ACTUAL`, MACHINE coordinate system). Axes are matched by their direction vector, not their name, so `Z1` or `W` can fill the "Z" slot. |
+1. Reads `/probe` and finds the axes, position data items, units and coordinate systems.
+2. Builds the 3D machine. There are two views:
+   - solid model: the CAD file that the agent gives in the probe (same as the Metalogi example)
+   - simplified: 3 linear axes + 2 rotary axes + spindle, made with simple blocks
+3. Reads `/current` and then `/sample` every 200 ms, and moves the axes with the real values.
 
-## Demo agent: what we found
+Axes are found by their direction (`Motion/Axis`) and data type (`POSITION`, `ANGLE`), not by their name. So it should also work with other machines.
 
-- **Mazak** (5-axis mill): X, Y, Z carry the spindle head; B tilts the table and C2 turns it.
-- **OKUMA** (MULTUS lathe): X, Y, Z1, Z4, B (turret tilt), C3, plus spindles C1, C2, C6.
+## What we found in the demo agent
+
+- Mazak: X, Y, Z move the spindle head, B tilts the table and C2 rotates it.
+- OKUMA: X, Y, Z1, Z4, B and C3, plus spindles C1, C2 and C6.
