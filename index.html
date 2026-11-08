@@ -16,13 +16,16 @@
   .bar input { width:260px; }
   button { font:bold 14px Calibri, sans-serif; padding:6px 12px; border:0; border-radius:4px; background:var(--gold); color:var(--ink); cursor:pointer; }
   button.secondary { background:#fff; }
-  main { display:grid; grid-template-columns: 1fr 470px; height: calc(100% - 58px); }
+  main { display:grid; grid-template-columns: 1fr 540px; height: calc(100% - 58px); }
   #view { position:relative; min-height:300px; }
   #view canvas { display:block; }
   #hud { position:absolute; left:10px; top:10px; background:rgba(255,255,255,.92); padding:8px 10px; font-size:13px; line-height:1.5; min-width:220px; }
   #hud .v { font-family: inherit; font-weight:bold; }
   #legend { position:absolute; left:10px; bottom:10px; background:rgba(255,255,255,.92); padding:6px 10px; font-size:11px; color:var(--muted); }
-  aside { overflow:auto; background:#fff; padding:12px 14px; }
+  aside { overflow-y:auto; overflow-x:hidden; background:#fff; padding:12px 16px; }
+  #axTbl, #csTbl { table-layout:fixed; }
+  #axTbl td, #csTbl td { overflow-wrap:break-word; }
+  #axTbl td:last-child { text-align:right; font-weight:bold; white-space:nowrap; }
   h2 { font-size:16px; color:var(--maroon); margin:16px 0 6px; }
   h2:first-child { margin-top:0; }
   table { width:100%; border-collapse:collapse; font-size:12.5px; }
@@ -81,18 +84,9 @@
       <button class="secondary" id="btnTrail">Clear trail</button>
     </div>
     <h2>3 · All axes in the device model</h2>
-    <table id="axTbl"><thead><tr><th>Axis</th><th>Motion</th><th>Position data item</th><th>Units / CS</th><th>Live</th></tr></thead><tbody></tbody></table>
+    <table id="axTbl"><colgroup><col style="width:23%"><col style="width:19%"><col style="width:21%"><col style="width:21%"><col style="width:16%"></colgroup><thead><tr><th>Axis</th><th>Motion</th><th>Data item</th><th>Units / CS</th><th style="text-align:right">Live</th></tr></thead><tbody></tbody></table>
     <h2>4 · Coordinate systems</h2>
-    <table id="csTbl"><thead><tr><th>id</th><th>type</th><th>parent</th><th>translation / rotation</th></tr></thead><tbody></tbody></table>
-    <h2>How it stays machine-independent</h2>
-    <div class="note">
-      No device names, data-item ids or axis names are coded in this page. Devices come from <span class="mono">/probe</span>.
-      A <b>Linear</b> component's position is its <span class="mono">POSITION</span> sample. A <b>Rotary</b> component's position is its <span class="mono">ANGLE</span> sample. Subtype <span class="mono">ACTUAL</span> and the MACHINE coordinate system are preferred.
-      A Rotary component that only reports <span class="mono">ROTARY_VELOCITY</span> is treated as a spindle.
-      The motion direction comes from <span class="mono">Configuration/Motion/Axis</span>. The axis name is used only if that vector is missing, and the table flags it.
-      The kinematic chain (what rides on what) comes from <span class="mono">Motion@parentIdRef</span> and the PARENT/CHILD component relationships.
-      Linear motion is drawn relative to the centre of the observed travel. It is either amplified to fill the model, or shown at true scale against the axis LENGTH specification. The HUD and tables always show the raw values.
-    </div>
+    <table id="csTbl"><colgroup><col style="width:18%"><col style="width:17%"><col style="width:15%"><col style="width:50%"></colgroup><thead><tr><th>id</th><th>type</th><th>parent</th><th>translation / rotation</th></tr></thead><tbody></tbody></table>
   </aside>
 </main>
 
@@ -484,7 +478,7 @@ function renderDiscovery(dev, header) {
       <td><b>${esc(a.name)}</b> <span class="pill ${pill}">${a.role}</span><div class="note">id ${esc(a.id)}${a.parent ? '<br>on ' + esc(a.parent.name) + ' <i>(' + esc(a.parentHow) + ')</i>' : ''}</div></td>
       <td class="mono">${esc(a.motion?.type || '—')}<br>${v}${a.vecSrc !== 'Motion/Axis' ? '<div class="warn">from ' + esc(a.vecSrc) + '</div>' : ''}</td>
       <td class="mono">${di ? esc(di.id) + '<div class="note">' + esc(di.type) + ' · ' + esc(di.subType || '') + '</div>' : '<span class="warn">none</span>'}</td>
-      <td>${esc(a.units)}${a.nativeUnits && a.nativeUnits !== a.units ? '<div class="note">native ' + esc(a.nativeUnits) + '</div>' : ''}<div class="note">${esc(a.csInfo)}</div>${a.lenMM ? '<div class="note">LENGTH ' + a.lenMM + ' mm</div>' : ''}</td>
+      <td>${esc(a.units).replace("/", "/<wbr>")}${a.nativeUnits && a.nativeUnits !== a.units ? '<div class="note">native ' + esc(a.nativeUnits) + '</div>' : ''}<div class="note">${esc(a.csInfo)}</div>${a.lenMM ? '<div class="note">LENGTH ' + a.lenMM + ' mm</div>' : ''}</td>
       <td class="mono" id="live-${esc(a.id)}">—</td></tr>`);
   }
   const ct = $('#csTbl tbody'); ct.innerHTML = '';
