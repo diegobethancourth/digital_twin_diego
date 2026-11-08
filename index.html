@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reusable 3-Axis CNC Digital Twin (MTConnect)</title>
+<style>
+  :root { --maroon:#8C1D40; --gold:#FFC627; --ink:#191919; --muted:#5c5c5c; --line:#ddd; --bg:#f6f4f1; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; font-family: Calibri, Carlito, 'Segoe UI', sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:var(--maroon); color:#fff; padding:10px 16px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:21px; margin:0; font-weight:bold; }
+  header .sub { font-size:13.5px; opacity:.85; }
+  .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-left:auto; }
+  .bar input, .bar select { font:14px Calibri, sans-serif; padding:5px 7px; border-radius:4px; border:1px solid #ccc; }
+  .bar input { width:260px; }
+  button { font:bold 14px Calibri, sans-serif; padding:6px 12px; border:0; border-radius:4px; background:var(--gold); color:var(--ink); cursor:pointer; }
+  button.secondary { background:#fff; }
+  main { display:grid; grid-template-columns: 1fr 470px; height: calc(100% - 58px); }
+  #view { position:relative; min-height:300px; }
+  #view canvas { display:block; }
+  #hud { position:absolute; left:10px; top:10px; background:rgba(255,255,255,.92); padding:8px 10px; font-size:13px; line-height:1.5; min-width:220px; }
+  #hud .v { font-family: inherit; font-weight:bold; }
+  #legend { position:absolute; left:10px; bottom:10px; background:rgba(255,255,255,.92); padding:6px 10px; font-size:11px; color:var(--muted); }
+  aside { overflow:auto; background:#fff; padding:12px 14px; }
+  h2 { font-size:16px; color:var(--maroon); margin:16px 0 6px; }
+  h2:first-child { margin-top:0; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; background:#f1ece4; color:var(--maroon); padding:4px; }
+  td { padding:4px; border-bottom:1px solid #eee; vertical-align:top; }
+  td.mono, .mono { font-family: inherit; }
+  .pill { display:inline-block; padding:1px 6px; border-radius:9px; font-size:10.5px; font-weight:bold; }
+  .lin { background:#e6eefc; color:#1f4fa8; } .rot { background:#fdeee6; color:#a8471f; } .spn { background:#eef7e8; color:#3d7a1f; }
+  .warn { color:#a8471f; }
+  #status { font-size:12px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#999; margin-right:5px; vertical-align:middle; }
+  .dot.ok { background:#2e9d3f; } .dot.err { background:#c0392b; } .dot.wait { background:var(--gold); }
+  select.slot { font:13px Calibri, sans-serif; width:100%; padding:2px; }
+  .note { font-size:12px; color:var(--muted); line-height:1.45; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; height:auto; } #view { height:60vh; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Reusable CNC Digital Twin</h1>
+    <div class="sub">MTConnect-driven · axes discovered from the agent's probe</div>
+  </div>
+  <div class="bar">
+    <button id="btnConnect" title="Probe the agent again">Reconnect</button>
+    <select id="deviceSel" title="Devices found in the probe"></select>
+    <select id="viewSel" title="3D view">
+      <option value="solid">View: solid model from probe</option>
+      <option value="simple">View: simplified 5-axis</option>
+    </select>
+  </div>
+</header>
+<main>
+  <div id="view">
+    <div id="hud"><div id="status"><span class="dot wait"></span>Starting…</div><div id="loadMsg" class="note"></div><div id="hudAxes"></div></div>
+    <div id="legend">Drag = orbit · Wheel = zoom · Right-drag = pan · Line on the part = tool-tip trail</div>
+  </div>
+  <aside>
+    <h2>1 · Machine discovered</h2>
+    <div id="devInfo" class="note">—</div>
+    <h2>2 · Axis mapping for the 3D model</h2>
+    <div class="note">Mapped automatically from <span class="mono">Motion/Axis</span> vectors, data-item types and parent relationships. You can change any slot.</div>
+    <table id="mapTbl"><tbody></tbody></table>
+    <div style="margin-top:6px; display:flex; gap:8px; align-items:center; font-size:12px">
+      <label>Motion scale
+        <select id="scaleMode" style="font:13px Calibri, sans-serif">
+          <option value="auto">Fit observed travel (amplified)</option>
+          <option value="true">True scale (LENGTH spec)</option>
+        </select></label>
+      <button class="secondary" id="btnTrail">Clear trail</button>
+    </div>
+    <h2>3 · All axes in the device model</h2>
+    <table id="axTbl"><thead><tr><th>Axis</th><th>Motion</th><th>Position data item</th><th>Units / CS</th><th>Live</th></tr></thead><tbody></tbody></table>
+    <h2>4 · Coordinate systems</h2>
+    <table id="csTbl"><thead><tr><th>id</th><th>type</th><th>parent</th><th>translation / rotation</th></tr></thead><tbody></tbody></table>
+    <h2>How it stays machine-independent</h2>
+    <div class="note">
+      No device names, data-item ids or axis names are coded in this page. Devices come from <span class="mono">/probe</span>.
+      A <b>Linear</b> component's position is its <span class="mono">POSITION</span> sample. A <b>Rotary</b> component's position is its <span class="mono">ANGLE</span> sample. Subtype <span class="mono">ACTUAL</span> and the MACHINE coordinate system are preferred.
+      A Rotary component that only reports <span class="mono">ROTARY_VELOCITY</span> is treated as a spindle.
+      The motion direction comes from <span class="mono">Configuration/Motion/Axis</span>. The axis name is used only if that vector is missing, and the table flags it.
+      The kinematic chain (what rides on what) comes from <span class="mono">Motion@parentIdRef</span> and the PARENT/CHILD component relationships.
+      Linear motion is drawn relative to the centre of the observed travel. It is either amplified to fill the model, or shown at true scale against the axis LENGTH specification. The HUD and tables always show the raw values.
+    </div>
+  </aside>
+</main>
+
+<script type="module">
+/*
+  Reusable CNC Digital Twin (MTConnect)
+  How it works, in short:
+    1. Read the machine description (/probe) from the MTConnect agent.
+    2. Find the axes, their position data, units and how they are connected.
+    3. Build a 3D model (simplified blocks, or the CAD file named in the probe).
+    4. Read live positions (/current, then /sample) and move the 3D parts.
+  Nothing here is written for one specific machine: names and ids come from the probe.
+*/
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+
+/* ===== STEP 0 · Small helpers ===== */
+const asArr = x => x == null ? [] : Array.isArray(x) ? x : [x];
+// MTConnect JSON comes in two shapes. pairs() reads both and gives a simple list of [type, object].
+function pairs(c) {
+  const out = [];
+  if (!c) return out;
+  const list = Array.isArray(c) ? c : [c];
+  for (const e of list) {
+    if (!e || typeof e !== 'object') continue;
+    for (const [k, v] of Object.entries(e)) for (const o of asArr(v)) if (o && typeof o === 'object') out.push([k, o]);
+  }
+  return out;
+}
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const UNIT = { MILLIMETER: 1, METER: 1000, CENTIMETER: 10, MICROMETER: 0.001, INCH: 25.4, FOOT: 304.8, DEGREE: 1, RADIAN: 180 / Math.PI };
+
+/* ===== STEP 1 · Talk to the MTConnect agent (through serve.py) ===== */
+let BASE = null;
+async function getJSON(path) {
+  const r = await fetch(BASE + path, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+  const t = await r.text();
+  let j; try { j = JSON.parse(t); } catch { throw new Error(`Not JSON from ${BASE + path} (HTTP ${r.status})`); }
+  if (j.MTConnectError) {
+    const e = pairs(j.MTConnectError.Errors).map(([, o]) => o.errorCode || o.value).join(', ');
+    const err = new Error('Agent error: ' + e); err.code = e; throw err;
+  }
+  return j;
+}
+async function resolveBase() {
+  // serve.py forwards /mtc/... to the agent. We try that first.
+  const candidates = ['/mtc', ''];
+  for (const c of candidates) {
+    BASE = c;
+    try { const j = await getJSON('/probe'); if (j.MTConnectDevices) return j; } catch (e) { /* try next */ }
+  }
+  throw new Error('No agent reachable. Start the server with: python serve.py');
+}
+
+/* ===== STEP 2 · Discover the machine from /probe =====
+   Find every Linear and Rotary axis, its position data item, units,
+   coordinate system, direction vector and the axis it is mounted on. */
+function discover(dev) {
+  const cs = {};
+  for (const [, c] of pairs(dev.Configuration?.CoordinateSystems)) cs[c.id] = c;
+  const axes = [];
+  (function walk(comp, path) {
+    for (const [type, c] of pairs(comp.Components)) {
+      const p = [...path, c.name || c.id];
+      if (type === 'Linear' || type === 'Rotary') axes.push(buildAxis(type, c, p, cs));
+      walk(c, p);
+    }
+  })(dev, []);
+
+  // Which axis is this axis mounted on? (from Motion@parentIdRef or the PARENT relationship)
+  const byMotion = {}, byChild = {}, byId = {};
+  for (const a of axes) {
+    byId[a.id] = a;
+    if (a.motion?.id) byMotion[a.motion.id] = a;
+    for (const r of a.rels) if (r.type === 'CHILD') byChild[r.idRef] = a;
+  }
+  for (const a of axes) {
+    let p = null, how = '';
+    if (a.motion?.parentIdRef && byMotion[a.motion.parentIdRef]) { p = byMotion[a.motion.parentIdRef]; how = 'Motion@parentIdRef'; }
+    if (!p) for (const r of a.rels) {
+      if (r.type !== 'PARENT') continue;
+      const cand = byChild[r.idRef] || byId[r.idRef];
+      if (cand && cand !== a) { p = cand; how = 'PARENT→' + r.idRef; break; }
+    }
+    a.parent = p; a.parentHow = how;
+  }
+  return { axes, cs };
+}
+
+function buildAxis(type, c, path, cs) {
+  const cfg = c.Configuration || {};
+  const motion = pairs(cfg.Motion ? [{ Motion: cfg.Motion }] : []).map(([, m]) => m)[0] || null;
+  const rels = pairs(cfg.Relationships).map(([, r]) => r);
+  const specs = pairs(cfg.Specifications).map(([, s]) => s);
+  const items = pairs(c.DataItems).map(([, d]) => d);
+  const linear = type === 'Linear';
+  const csType = d => cs[d.coordinateSystemIdRef]?.type || d.coordinateSystem || '';
+  const score = d => (d.subType === 'ACTUAL' ? 4 : !d.subType ? 2 : 0) + (csType(d) === 'MACHINE' ? 2 : !csType(d) ? 1 : 0);
+  const pos = items.filter(d => d.type === (linear ? 'POSITION' : 'ANGLE') && d.category === 'SAMPLE').sort((a, b) => score(b) - score(a))[0] || null;
+  const vel = linear ? null : (items.filter(d => d.type === 'ROTARY_VELOCITY' && d.category === 'SAMPLE').sort((a, b) => (b.subType === 'ACTUAL') - (a.subType === 'ACTUAL'))[0] || null);
+
+  let vec = null, vecSrc = 'Motion/Axis';
+  const ax = motion?.Axis ?? motion?.axis;
+  let rawVec = null; // direction exactly as written in the probe (length can be a scale, e.g. 0.5)
+  if (Array.isArray(ax) && ax.length === 3 && ax.some(v => +v)) { rawVec = new THREE.Vector3(+ax[0], +ax[1], +ax[2]); vec = rawVec.clone().normalize(); }
+  if (!vec) {
+    // Only if the probe gives no direction: guess from the axis letter (shown as a warning).
+    const L = String(c.name || '').toUpperCase()[0];
+    vec = new THREE.Vector3(...({ X: [1, 0, 0], A: [1, 0, 0], Y: [0, 1, 0], B: [0, 1, 0], Z: [0, 0, 1], C: [0, 0, 1], W: [0, 0, 1], U: [1, 0, 0], V: [0, 1, 0] }[L] || [0, 0, 1]));
+    vecSrc = 'name (no Motion/Axis)';
+  }
+  const lenSpec = specs.find(s => s.type === 'LENGTH');
+  const lenVal = lenSpec ? +(lenSpec.Nominal ?? lenSpec.Maximum ?? lenSpec.value ?? 0) * (UNIT[lenSpec.units] || 1) : 0;
+  const role = linear ? 'linear' : pos ? 'rotary' : vel ? 'spindle' : 'none';
+  return {
+    type, id: c.id, name: c.name || c.id, path: path.join('/'), motion, rels, vec, rawVec: rawVec || vec.clone(), vecSrc, role, pos, vel,
+    csInfo: pos ? `${pos.coordinateSystemIdRef || pos.coordinateSystem || '—'}${csType(pos) ? ' (' + csType(pos) + ')' : ''}` : '—',
+    units: (pos || vel)?.units || '', nativeUnits: (pos || vel)?.nativeUnits || '',
+    lenMM: lenVal, value: null, ts: null, min: Infinity, max: -Infinity, shown: 0, spinAngle: 0, obj: null
+  };
+}
+const dominant = v => { const a = [Math.abs(v.x), Math.abs(v.y), Math.abs(v.z)]; return 'xyz'[a.indexOf(Math.max(...a))]; };
+
+/* ===== STEP 3 · Choose which axes drive the simplified model =====
+   3 linear (by direction X/Y/Z), 2 rotary, 1 spindle. User can change them. */
+let model = null, map = {};
+const SLOTS = [['X', 'linear', 'Linear along machine X'], ['Y', 'linear', 'Linear along machine Y'], ['Z', 'linear', 'Linear along machine Z'],
+               ['R1', 'rotary', 'Rotary 1'], ['R2', 'rotary', 'Rotary 2'], ['S', 'spindle', 'Spindle (visual spin)']];
+function autoMap(axes) {
+  const m = {};
+  const lin = axes.filter(a => a.role === 'linear' && a.pos);
+  for (const d of ['x', 'y', 'z']) m[d.toUpperCase()] = lin.find(a => dominant(a.vec) === d && !Object.values(m).includes(a)) || null;
+  const rot = axes.filter(a => a.role === 'rotary');
+  const depth = a => { let n = 0, p = a.parent; while (p && n < 20) { n++; p = p.parent; } return n; };
+  rot.sort((a, b) => depth(a) - depth(b));
+  m.R1 = rot[0] || null; m.R2 = rot.find(a => a !== m.R1 && a.parent === m.R1) || rot[1] || null;
+  const sp = axes.filter(a => a.role === 'spindle');
+  const inChain = a => { let p = a.parent; while (p) { if ([m.X, m.Y, m.Z].includes(p)) return true; p = p.parent; } return false; };
+  m.S = sp.find(inChain) || sp[0] || null;
+  return m;
+}
+
+/* ===== STEP 4 · 3D scene (camera, lights, floor grid) ===== */
+THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
+const view = $('#view');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+view.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xeeeae4);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.05, 100);
+camera.position.set(3.6, -4.6, 3.2);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 1.0); controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8070, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(3, -4, 6); scene.add(sun);
+const grid = new THREE.GridHelper(8, 32, 0x9a8f80, 0xcfc7bb); grid.rotation.x = Math.PI / 2; scene.add(grid);
+function resize() { const w = view.clientWidth, h = view.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+
+const mat = c => new THREE.MeshStandardMaterial({ color: c, metalness: 0.25, roughness: 0.55 });
+const M = { frame: mat(0x4a4a4f), bed: mat(0x5d5d63), maroon: mat(0x8C1D40), gold: mat(0xFFC627), steel: mat(0xb9bcc2), part: mat(0xd9a441), blue: mat(0x2f6fb5), dark: mat(0x222226) };
+const AXCOL = { X: 0xd64545, Y: 0x3fa34d, Z: 0x2f6fb5, R1: 0xFFC627, R2: 0xe08a2e, S: 0x8C1D40 };
+const box = (w, d, h, m) => new THREE.Mesh(new THREE.BoxGeometry(w, d, h), m);
+const cylAlong = (r, len, m, dir) => { const g = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 40), m); g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize()); return g; };
+
+let machine = null, toolTip = null, workRef = null, trail = null, trailPts = [];
+const VIS_TRAVEL = 0.9; // how far a full axis stroke moves on screen
+
+function buildScene() {
+  if (machine) scene.remove(machine);
+  machine = new THREE.Group(); scene.add(machine);
+  // Fixed parts: bed, column and arm
+  const bed = box(2.6, 1.8, 0.35, M.bed); bed.position.set(0, 0, 0.175); machine.add(bed);
+  const col = box(0.55, 0.55, 2.5, M.frame); col.position.set(0, 1.15, 1.6); machine.add(col);
+  const arm = box(0.55, 1.0, 0.35, M.frame); arm.position.set(0, 0.7, 2.7); machine.add(arm);
+  const stripe = box(0.56, 0.56, 0.08, M.maroon); stripe.position.set(0, 1.15, 2.3); machine.add(stripe);
+
+  // Build the chain of moving parts (which axis carries which)
+  const sel = [...new Set(Object.entries(map).filter(([k, v]) => k !== 'S' && v).map(([, v]) => v))];
+  const isSel = a => sel.includes(a);
+  const selParent = a => { let p = a.parent, n = 0; while (p && !isSel(p) && n++ < 30) p = p.parent; return p && isSel(p) ? p : null; };
+  const kids = new Map(sel.map(a => [a, []])); const roots = [];
+  for (const a of sel) { const p = selParent(a); if (p && p !== a) kids.get(p).push(a); else roots.push(a); }
+  const tree = r => { const out = [r]; for (const k of kids.get(r)) out.push(...tree(k)); return out; };
+  // Tool side = chain that carries the spindle. Table side = the other chain.
+  const spAnc = []; { let p = map.S?.parent, n = 0; while (p && n++ < 30) { spAnc.push(p); p = p.parent; } }
+  let toolRoot = roots.find(r => tree(r).some(a => spAnc.includes(a)));
+  if (!toolRoot) toolRoot = [...roots].sort((a, b) => tree(b).filter(x => x.role === 'linear').length - tree(a).filter(x => x.role === 'linear').length)[0];
+
+  const headMount = new THREE.Group(); headMount.position.set(0, 0.15, 2.45); machine.add(headMount);
+  const tableMount = new THREE.Group(); tableMount.position.set(0, -0.1, 0.38); machine.add(tableMount);
+  const slotOf = a => Object.keys(map).find(k => map[k] === a);
+
+  function build(a, parentObj, side) {
+    const slot = slotOf(a); const color = new THREE.Color(AXCOL[slot] || 0x888888);
+    const m = mat(color);
+    const mount = new THREE.Group(); parentObj.add(mount);
+    const g = new THREE.Group(); mount.add(g); a.obj = g;
+    let next = new THREE.Group(); g.add(next);
+    const down = side === 'tool' ? -1 : 1;
+    if (a.role === 'linear') {
+      const d = dominant(a.vec);
+      const c = side === 'tool' ? box(d === 'x' ? 0.42 : 0.5, d === 'y' ? 0.42 : 0.5, 0.22, m) : box(d === 'x' ? 1.2 : 1.0, d === 'y' ? 1.0 : 0.85, 0.09, m);
+      c.position.z = down * 0.11; g.add(c);
+      next.position.z = down * (side === 'tool' ? 0.2 : 0.09);
+    } else {
+      const vertical = dominant(a.vec) === 'z';
+      if (side === 'work' && vertical) {
+        const disc = cylAlong(0.42, 0.08, m, a.vec); disc.position.z = 0.04; g.add(disc);
+        const mark = box(0.08, 0.38, 0.02, M.dark); mark.position.set(0, -0.2, 0.09); g.add(mark);
+        next.position.z = 0.08;
+      } else if (side === 'work') {
+        mount.position.z = 0.45; // tilting table: pivot sits above the bed
+        const shaft = cylAlong(0.07, 1.25, m, a.vec); g.add(shaft);
+        const cradle = box(0.95, 0.95, 0.08, m); cradle.position.z = -0.3; g.add(cradle);
+        const cheek1 = box(0.08, 0.95, 0.4, m), cheek2 = cheek1.clone();
+        const perp = dominant(a.vec) === 'x' ? 'x' : 'y';
+        cheek1.position[perp] = 0.5; cheek2.position[perp] = -0.5; cheek1.position.z = cheek2.position.z = -0.12; g.add(cheek1, cheek2);
+        next.position.z = -0.26;
+      } else {
+        const hub = cylAlong(0.18, 0.5, m, a.vec); g.add(hub);
+        const head = box(0.3, 0.3, 0.35, m); head.position.z = -0.2; g.add(head);
+        next.position.z = -0.38;
+      }
+    }
+    for (const k of kids.get(a)) build(k, next, side);
+    return next;
+  }
+  const deepest = (r) => { let best = r, bd = 0; (function f(a, d) { if (d > bd) { bd = d; best = a; } kids.get(a).forEach(k => f(k, d + 1)); })(r, 0); return best; };
+
+  for (const a of sel) a.obj = null;
+  let toolEnd = headMount, workEnd = tableMount;
+  for (const r of roots) {
+    const side = r === toolRoot ? 'tool' : 'work';
+    build(r, side === 'tool' ? headMount : tableMount, side);
+  }
+  // Find the end of each chain (where the tool and the part are attached)
+  if (toolRoot) { const d = deepest(toolRoot); if (d.obj) toolEnd = d.obj.children[0]; }
+  const workRoots = roots.filter(r => r !== toolRoot);
+  if (workRoots.length) { const d = deepest(workRoots[0]); if (d.obj) workEnd = d.obj.children[0]; }
+
+  // Spindle and cutting tool at the end of the tool chain
+  const spMount = new THREE.Group(); toolEnd.add(spMount);
+  const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.35, 36), M.steel); housing.rotation.x = Math.PI / 2; housing.position.z = -0.18; spMount.add(housing);
+  const spin = new THREE.Group(); spin.position.z = -0.35; spMount.add(spin);
+  const holder = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.05, 0.12, 24), M.gold); holder.rotation.x = Math.PI / 2; holder.position.z = -0.06; spin.add(holder);
+  const tool = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.28, 16), M.dark); tool.rotation.x = Math.PI / 2; tool.position.z = -0.26; spin.add(tool);
+  const flute = box(0.06, 0.01, 0.2, M.steel); flute.position.z = -0.27; spin.add(flute);
+  toolTip = new THREE.Object3D(); toolTip.position.z = -0.4; spin.add(toolTip);
+  if (map.S) map.S.obj = spin;
+
+  // Workpiece at the end of the table chain
+  const part = box(0.4, 0.4, 0.25, M.part); part.position.z = 0.125; workEnd.add(part);
+  workRef = new THREE.Group(); workEnd.add(workRef);
+  trailPts = [];
+  trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x8C1D40 }));
+  trail.frustumCulled = false; workRef.add(trail);
+  // Small X/Y/Z arrows in the corner
+  const triad = new THREE.AxesHelper(0.5); triad.position.set(-1.5, -1.1, 0.36); machine.add(triad);
+  machine.visible = viewNow !== 'solid';
+}
+
+/* ===== STEP 5 · CAD view (same idea as the Metalogi demo) =====
+   The probe can name a CAD file (SolidModel href) and parts inside it (itemRef).
+   Each axis moves one part; that part rides on its parent part. */
+let viewNow = 'simple', solidGroup = null;
+const objUnitMM = u => ({ METER: 1000, CENTIMETER: 10, MILLIMETER: 1, MICROMETER: 0.001, INCH: 25.4, FOOT: 304.8 }[String(u || 'METER').split(':').pop().toUpperCase()] || 1000);
+const encMat = new THREE.MeshPhongMaterial({ color: 0x0A0A0A, specular: 0x111111, shininess: 200, opacity: 0.45, transparent: true, depthWrite: false });
+const modelCache = new Map();
+function loadModel(url, mediaType) {
+  if (!modelCache.has(url)) modelCache.set(url, new Promise((res, rej) => {
+    const onProg = x => { if (x.total) $('#loadMsg').textContent = `Loading CAD model… ${(100 * x.loaded / x.total).toFixed(0)} % of ${(x.total / 1e6).toFixed(0)} MB`; };
+    if (String(mediaType).toUpperCase() === 'STL') {
+      import('three/addons/loaders/STLLoader.js').then(({ STLLoader }) => new STLLoader().load(url,
+        g => res(new THREE.Mesh(g, new THREE.MeshPhongMaterial({ color: 0x8a8a90 }))), onProg, rej));
+    } else new OBJLoader().load(url, res, onProg, rej);
+  }));
+  return modelCache.get(url);
+}
+function discoverSolids(dev) {
+  const solids = [];
+  const add = (type, c) => {
+    const sm = c.Configuration?.SolidModel;
+    for (const [, s] of pairs(sm ? [{ SolidModel: sm }] : [])) solids.push({ ...s, _owner: c.id, _ownerType: type });
+  };
+  add('Device', dev);
+  (function walk(comp) { for (const [t, c] of pairs(comp.Components)) { add(t, c); walk(c); } })(dev);
+  return solids;
+}
+const hrefURL = h => /^https?:/i.test(h) ? h : BASE + (h.startsWith('/') ? h : '/' + h);
+
+async function buildSolid(dev, myRun) {
+  if (solidGroup) { scene.remove(solidGroup); solidGroup = null; }
+  for (const a of model.axes) a.mover = null;
+  const solids = discoverSolids(dev);
+  const files = solids.filter(s => s.href);
+  if (!files.length) return false;
+  const group = new THREE.Group();
+  const objOf = {};
+  for (const s of files) {
+    const src = await loadModel(hrefURL(s.href), s.mediaType);
+    if (myRun !== runId) return false;
+    const o = src.clone(true);
+    const mm = objUnitMM(s.nativeUnits);
+    o.scale.setScalar(mm / 1000);                                    // scene units = metres
+    const sc = s.Scale; if (Array.isArray(sc) && sc.length === 3) o.scale.multiply(new THREE.Vector3(...sc.map(Number)));
+    const T = s.Transformation;
+    if (T?.Translation) o.position.fromArray(T.Translation.map(v => +v / 1000));
+    if (T?.Rotation) o.rotation.set(...[0, 1, 2].map(i => THREE.MathUtils.degToRad(+T.Rotation[i] || 0)));
+    o.userData.mm = mm;
+    group.add(o); objOf[s.id] = o;
+  }
+  // Find each named part inside the CAD file
+  const partOf = {};
+  for (const s of solids) {
+    let o = null, file = null;
+    if (s.href) { o = file = objOf[s.id]; }
+    else if (s.itemRef && objOf[s.solidModelIdRef]) { file = objOf[s.solidModelIdRef]; o = file.getObjectByName(s.itemRef); }
+    if (!o) continue;
+    o.userData.file = file;
+    if (!partOf[s._owner] || s.itemRef) partOf[s._owner] = o;
+    if (s._ownerType === 'Enclosure' && o !== file) o.traverse(m => { if (m.isMesh) m.material = encMat; });
+  }
+  // a) Each axis moves the part named in its CHILD relationship
+  const wired = [];
+  for (const a of model.axes) {
+    const rc = a.rels.find(r => r.type === 'CHILD' && partOf[r.idRef]);
+    if (!rc) continue;
+    const part = partOf[rc.idRef], mm = part.userData.file.userData.mm;
+    const mover = new THREE.Group(); mover.name = 'axis:' + a.name;
+    const tr = a.motion?.Transformation?.Translation;
+    if (a.type === 'Rotary' && Array.isArray(tr) && tr.some(v => +v)) mover.position.fromArray(tr.map(v => +v / mm));
+    part.parent.add(mover); mover.updateMatrixWorld(true); mover.attach(part);
+    a.mover = mover; a.part = part; a.fileMM = mm; wired.push(a);
+  }
+  // b) That part rides on the part named in its PARENT relationship
+  for (const a of wired) {
+    for (const r of a.rels) {
+      const pp = r.type === 'PARENT' && partOf[r.idRef];
+      if (pp && pp !== a.part) { pp.updateMatrixWorld(true); pp.attach(a.mover); break; }
+    }
+  }
+  for (const a of wired) {
+    a.restPos = a.mover.position.clone(); a.restQuat = a.mover.quaternion.clone(); a.sShown = null;
+    const t = model.cs[a.motion?.coordinateSystemIdRef]?.Transformation?.Translation;
+    a.csT = Array.isArray(t) ? new THREE.Vector3(...t.map(Number)) : new THREE.Vector3();
+  }
+  solidGroup = group; scene.add(group);
+  // Point the camera at the machine
+  const bb = new THREE.Box3().setFromObject(group), c = bb.getCenter(new THREE.Vector3()), size = bb.getSize(new THREE.Vector3()).length();
+  controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(0.25, -1.1, 0.55).multiplyScalar(size)); camera.near = size / 500; camera.far = size * 20; camera.updateProjectionMatrix();
+  $('#loadMsg').textContent = `CAD model: ${files.map(f => f.href.split('/').pop()).join(', ')} · ${wired.length} axes linked to parts (${wired.map(a => a.name).join(', ')})`;
+  return true;
+}
+
+async function applyView(dev, myRun) {
+  const hasSolid = discoverSolids(dev).some(s => s.href);
+  const opt = $('#viewSel').querySelector('[value=solid]'); opt.disabled = !hasSolid;
+  opt.textContent = hasSolid ? 'View: solid model from probe' : 'View: solid model (none in probe)';
+  if ($('#viewSel').value === 'solid' && hasSolid) {
+    viewNow = 'solid'; machine.visible = false; scene.background.set(0xa0a0a0);
+    try { if (!(await buildSolid(dev, myRun))) throw new Error('no model'); }
+    catch (e) { $('#loadMsg').textContent = 'CAD model could not load (' + e.message + '), showing the simplified model'; viewNow = 'simple'; }
+  } else viewNow = 'simple';
+  if (viewNow === 'simple') {
+    if (solidGroup) { scene.remove(solidGroup); solidGroup = null; }
+    if (!hasSolid) $('#loadMsg').textContent = 'This device has no SolidModel in its probe: simplified view.';
+    else if ($('#viewSel').value === 'simple') $('#loadMsg').textContent = '';
+    machine.visible = true; scene.background.set(0xeeeae4);
+    controls.target.set(0, 0, 1.0); camera.position.set(3.6, -4.6, 3.2); camera.near = 0.05; camera.far = 100; camera.updateProjectionMatrix();
+  }
+}
+
+/* ===== STEP 6 · Side panel tables ===== */
+function renderDiscovery(dev, header) {
+  const lin = model.axes.filter(a => a.type === 'Linear').length, rot = model.axes.filter(a => a.type === 'Rotary').length;
+  $('#devInfo').innerHTML = `<b>${esc(dev.name)}</b> · uuid <span class="mono">${esc(dev.uuid)}</span>${dev.Description?.manufacturer ? ' · ' + esc(dev.Description.manufacturer) : ''}${dev.Description?.model ? ' ' + esc(dev.Description.model) : ''}<br>
+    ${lin} linear and ${rot} rotary components · agent ${esc(header?.sender || '')} v${esc(header?.version || '')} · instance <span class="mono">${esc(header?.instanceId)}</span>`;
+  const tb = $('#axTbl tbody'); tb.innerHTML = '';
+  for (const a of model.axes) {
+    const pill = a.role === 'linear' ? 'lin' : a.role === 'rotary' ? 'rot' : 'spn';
+    const v = a.vec ? `[${a.vec.toArray().map(n => +n.toFixed(2)).join(', ')}]` : '—';
+    const di = a.pos || a.vel;
+    tb.insertAdjacentHTML('beforeend', `<tr>
+      <td><b>${esc(a.name)}</b> <span class="pill ${pill}">${a.role}</span><div class="note">id ${esc(a.id)}${a.parent ? '<br>on ' + esc(a.parent.name) + ' <i>(' + esc(a.parentHow) + ')</i>' : ''}</div></td>
+      <td class="mono">${esc(a.motion?.type || '—')}<br>${v}${a.vecSrc !== 'Motion/Axis' ? '<div class="warn">from ' + esc(a.vecSrc) + '</div>' : ''}</td>
+      <td class="mono">${di ? esc(di.id) + '<div class="note">' + esc(di.type) + ' · ' + esc(di.subType || '') + '</div>' : '<span class="warn">none</span>'}</td>
+      <td>${esc(a.units)}${a.nativeUnits && a.nativeUnits !== a.units ? '<div class="note">native ' + esc(a.nativeUnits) + '</div>' : ''}<div class="note">${esc(a.csInfo)}</div>${a.lenMM ? '<div class="note">LENGTH ' + a.lenMM + ' mm</div>' : ''}</td>
+      <td class="mono" id="live-${esc(a.id)}">—</td></tr>`);
+  }
+  const ct = $('#csTbl tbody'); ct.innerHTML = '';
+  for (const c of Object.values(model.cs)) {
+    const t = c.Transformation; const tr = t ? `T ${JSON.stringify(t.Translation ?? '')} R ${JSON.stringify(t.Rotation ?? '')}` : (c.Origin ? 'origin ' + JSON.stringify(c.Origin) : '—');
+    ct.insertAdjacentHTML('beforeend', `<tr><td class="mono">${esc(c.id)}</td><td>${esc(c.type)}</td><td class="mono">${esc(c.parentIdRef || '—')}</td><td class="mono">${esc(tr)}</td></tr>`);
+  }
+  if (!Object.keys(model.cs).length) ct.innerHTML = '<tr><td colspan="4" class="note">No CoordinateSystems declared in this device.</td></tr>';
+}
+function renderMapping() {
+  const tb = $('#mapTbl tbody'); tb.innerHTML = '';
+  for (const [slot, role, label] of SLOTS) {
+    const opts = model.axes.filter(a => role === 'linear' ? a.role === 'linear' : role === 'rotary' ? a.role === 'rotary' : a.role === 'spindle' || a.role === 'rotary');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="width:42%"><span style="display:inline-block;width:10px;height:10px;background:#${AXCOL[slot].toString(16).padStart(6, '0')};margin-right:5px"></span>${label}</td><td></td>`;
+    const s = document.createElement('select'); s.className = 'slot';
+    s.innerHTML = `<option value="">— none —</option>` + opts.map(a => `<option value="${esc(a.id)}" ${map[slot] === a ? 'selected' : ''}>${esc(a.name)} (${esc((a.pos || a.vel)?.id || 'no data')})</option>`).join('');
+    s.onchange = () => { map[slot] = model.axes.find(a => a.id === s.value) || null; buildScene(); };
+    tr.children[1].appendChild(s); tb.appendChild(tr);
+  }
+}
+function setStatus(cls, html) { $('#status').innerHTML = `<span class="dot ${cls}"></span>${html}`; }
+
+/* ===== STEP 7 · Live data: /current once, then /sample every 200 ms ===== */
+let runId = 0, updates = 0, lastRateT = performance.now(), rate = 0;
+const itemIndex = new Map(); // data item id -> the axis it belongs to
+function applyObservations(json) {
+  const obs = [];
+  (function walk(x, tag) {
+    if (Array.isArray(x)) { x.forEach(e => walk(e, tag)); return; }
+    if (!x || typeof x !== 'object') return;
+    if ('dataItemId' in x) { obs.push(x); return; }
+    for (const [k, v] of Object.entries(x)) walk(v, k);
+  })(json.MTConnectStreams?.Streams);
+  obs.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+  for (const o of obs) {
+    const hit = itemIndex.get(o.dataItemId); if (!hit) continue;
+    const [a, kind] = hit; const di = kind === 'pos' ? a.pos : a.vel;
+    const raw = o.value ?? o.Value;
+    const v = typeof raw === 'number' ? raw : parseFloat(raw);
+    if (!Number.isFinite(v)) { a[kind === 'pos' ? 'value' : 'rpm'] = null; continue; }
+    const val = v * (UNIT[di.units] || 1);
+    if (kind === 'pos') { a.value = val; a.ts = o.timestamp; a.min = Math.min(a.min, val); a.max = Math.max(a.max, val); }
+    else { a.rpm = val; a.ts = o.timestamp; }
+    updates++;
+  }
+}
+async function stream(devName, myRun) {
+  // Each device keeps its own sequence number
+  const dpath = '/' + encodeURIComponent(devName);
+  let nextSeq = null, instanceId = null;
+  while (myRun === runId) {
+    try {
+      if (nextSeq == null) {
+        const cur = await getJSON(dpath + '/current');
+        if (myRun !== runId) return;
+        instanceId = cur.MTConnectStreams.Header.instanceId; nextSeq = cur.MTConnectStreams.Header.nextSequence;
+        applyObservations(cur);
+      } else {
+        const s = await getJSON(`${dpath}/sample?from=${nextSeq}&count=1000`);
+        if (myRun !== runId) return;
+        const h = s.MTConnectStreams.Header;
+        if (h.instanceId !== instanceId) { connect(devName); return; } // agent restarted: read the probe again
+        nextSeq = h.nextSequence; applyObservations(s);
+      }
+      const t = performance.now(); if (t - lastRateT > 1000) { rate = updates * 1000 / (t - lastRateT); updates = 0; lastRateT = t; }
+      setStatus('ok', `Live · <span class="mono">${esc(BASE || location.origin)}</span><br>seq ${nextSeq} · ${rate.toFixed(0)} obs/s`);
+      await sleep(200);
+    } catch (e) {
+      if (String(e.code || '').includes('OUT_OF_RANGE')) { nextSeq = null; continue; }
+      if (myRun !== runId) return;
+      setStatus('err', esc(e.message) + ' — retrying'); nextSeq = null; await sleep(2000);
+    }
+  }
+}
+
+/* ===== STEP 8 · Start: probe -> discover -> build 3D -> stream ===== */
+let probeCache = null;
+async function connect(preferred) {
+  const myRun = ++runId;
+  setStatus('wait', 'Probing agent…');
+  try { probeCache = await resolveBase(); }
+  catch (e) { setStatus('err', esc(e.message)); return; }
+  const root = probeCache.MTConnectDevices;
+  const devices = pairs(root.Devices).filter(([t]) => t === 'Device').map(([, d]) => d);
+  const sel = $('#deviceSel'); sel.innerHTML = devices.map(d => `<option>${esc(d.name)}</option>`).join('');
+  const want = preferred || new URLSearchParams(location.search).get('device');
+  // No device in the URL? Pick the first one with 3 linear + 2 rotary axes
+  let dev = devices.find(d => d.name === want);
+  if (!dev) dev = devices.find(d => { const m = autoMap(discover(d).axes); return m.X && m.Y && m.Z && m.R1 && m.R2; }) || devices[0];
+  if (!dev) { setStatus('err', 'Probe has no devices'); return; }
+  sel.value = dev.name;
+  model = discover(dev); map = autoMap(model.axes);
+  itemIndex.clear();
+  for (const a of model.axes) { if (a.pos) itemIndex.set(a.pos.id, [a, 'pos']); if (a.vel) itemIndex.set(a.vel.id, [a, 'vel']); }
+  renderDiscovery(dev, root.Header); renderMapping(); buildScene();
+  currentDev = dev;
+  stream(dev.name, myRun);
+  applyView(dev, myRun);
+}
+let currentDev = null;
+$('#viewSel').onchange = () => { if (currentDev) applyView(currentDev, runId); };
+$('#btnConnect').onclick = () => connect($('#deviceSel').value || null);
+$('#deviceSel').onchange = e => connect(e.target.value);
+$('#btnTrail').onclick = () => { trailPts = []; trail.geometry.setFromPoints([]); };
+
+/* ===== STEP 9 · Animation loop: move the 3D parts with the live values ===== */
+const clock = new THREE.Clock(); const tmp = new THREE.Vector3();
+function displayValue(a) { // simplified view: position around the middle of the travel, scaled for the screen
+  if (a.value == null) return 0;
+  const centre = (a.min + a.max) / 2;
+  const range = a.max - a.min;
+  const span = $('#scaleMode').value === 'true' ? Math.max(a.lenMM || 0, range, 50) : Math.max(range, 20);
+  return THREE.MathUtils.clamp((a.value - centre) / span, -0.55, 0.55) * VIS_TRAVEL;
+}
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  controls.update();
+  if (model) {
+    let hud = '';
+    for (const [slot, , label] of SLOTS) {
+      const a = map[slot]; if (!a) continue;
+      if (a.obj) {
+        if (slot === 'S' || (a.role !== 'linear' && a.value == null && a.rpm != null)) {
+          const rps = Math.min(Math.abs(a.rpm || 0) / 60, 4) * Math.sign(a.rpm || 0); // limit spin speed on screen
+          a.spinAngle += rps * 2 * Math.PI * dt; a.obj.quaternion.setFromAxisAngle(slot === 'S' ? new THREE.Vector3(0, 0, 1) : a.vec, a.spinAngle);
+        } else if (a.role === 'linear') {
+          a.shown += (displayValue(a) - a.shown) * Math.min(1, dt * 8);
+          a.obj.position.copy(a.vec).multiplyScalar(a.shown);
+        } else if (a.value != null) {
+          let target = a.value, d = ((target - a.shown + 540) % 360) - 180; // rotate the short way round
+          a.shown += d * Math.min(1, dt * 8);
+          a.obj.quaternion.setFromAxisAngle(a.vec, THREE.MathUtils.degToRad(a.shown));
+        }
+      }
+      const val = slot === 'S' ? (a.rpm != null ? a.rpm.toFixed(0) + ' rpm' : 'UNAVAILABLE') : a.value != null ? a.value.toFixed(3) + (a.role === 'linear' ? ' mm' : '°') : 'UNAVAILABLE';
+      hud += `<div><span style="color:#${AXCOL[slot].toString(16).padStart(6, '0')}">■</span> ${esc(slot)} = ${esc(a.name)} : <span class="v">${val}</span></div>`;
+    }
+    $('#hudAxes').innerHTML = hud;
+    for (const a of model.axes) {
+      const el = document.getElementById('live-' + a.id);
+      if (el) el.textContent = a.value != null ? a.value.toFixed(3) : a.rpm != null ? a.rpm.toFixed(0) + ' rpm' : '—';
+    }
+    // CAD view: move every axis that has a CAD part
+    if (viewNow === 'solid') for (const a of model.axes) {
+      if (!a.mover) continue;
+      if (a.type === 'Linear' && a.value != null) {
+        a.sShown = a.sShown == null ? a.value : a.sShown + (a.value - a.sShown) * Math.min(1, dt * 8);
+        // position = direction x value, minus the coordinate-system offset
+        const d = a.rawVec.clone().multiplyScalar(a.sShown).sub(a.csT.clone().multiply(a.rawVec));
+        a.mover.position.copy(a.restPos).addScaledVector(d, 1 / a.fileMM);
+      } else if (a.type === 'Rotary' && a.value != null) {
+        a.sShown = a.sShown == null ? a.value : a.sShown + ((((a.value - a.sShown + 540) % 360) - 180)) * Math.min(1, dt * 8);
+        a.mover.quaternion.copy(a.restQuat).multiply(new THREE.Quaternion().setFromAxisAngle(a.vec, THREE.MathUtils.degToRad(a.sShown)));
+      } else if (a.type === 'Rotary' && a.rpm != null) {
+        a.spinAngle += Math.min(Math.abs(a.rpm) / 60, 4) * Math.sign(a.rpm) * 2 * Math.PI * dt;
+        a.mover.quaternion.copy(a.restQuat).multiply(new THREE.Quaternion().setFromAxisAngle(a.vec, a.spinAngle));
+      }
+    }
+    // Simplified view: draw the tool-tip path on the part
+    if (viewNow === 'simple' && toolTip && workRef && model.axes.some(a => a.value != null)) {
+      machine.updateMatrixWorld(true);
+      toolTip.getWorldPosition(tmp); workRef.worldToLocal(tmp);
+      const last = trailPts[trailPts.length - 1];
+      if (!last || last.distanceTo(tmp) > 0.004) {
+        trailPts.push(tmp.clone()); if (trailPts.length > 3000) trailPts.shift();
+        trail.geometry.dispose(); trail.geometry = new THREE.BufferGeometry().setFromPoints(trailPts);
+      }
+    }
+  }
+  renderer.render(scene, camera);
+});
+
+connect();
+</script>
+</body>
+</html>
