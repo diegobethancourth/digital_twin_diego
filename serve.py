@@ -44,12 +44,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             body, status, ctype = e.read(), e.code, e.headers.get("Content-Type", "application/json")
         except Exception as e:
             body, status, ctype = str(e).encode(), 502, "text/plain"
-        self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the browser closed the tab or reloaded: nothing to worry about
 
     def log_message(self, fmt, *a):  # keep the console quiet except for errors
         if not self.path.startswith("/mtc/") or " 200 " not in (fmt % a):

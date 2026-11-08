@@ -19,9 +19,20 @@ Click this link (you need to be signed in to GitHub):
 3. At the bottom, open the **Ports** tab and click the globe icon on port **8000**. The twin opens in a new tab.
 4. Choose **Mazak** or **OKUMA** at the top. The first time, the CAD model takes a few seconds to load.
 
-Next time you can open the same codespace again from **Code → Codespaces** in this repo. It stops by itself after 30 minutes without use.
+If the **Ports** tab is empty, click **Forward a Port**, type `8000` and press Enter.
+
+### First time and next times
+
+- You create the codespace only **one time**.
+- Next times, open the same codespace from **Code → Codespaces** in this repo (or from github.com/codespaces) and click its name. Wait about one minute and the server starts again.
+- The twin address stays the same, so you can save it as a bookmark. It looks like `https://<codespace-name>-8000.app.github.dev/?device=Mazak`.
+- The bookmark works only while the codespace is running. It stops by itself after 30 minutes without use, so open the codespace first.
+- The address is personal: it only works for the person who created the codespace. Each one of us needs our own codespace.
+- GitHub deletes a codespace after 30 days without use. Then just create a new one with the link above.
 
 Note: do not type `python serve.py` in the codespace terminal. The server is already running, and a second one gives "port already in use".
+
+A short step-by-step guide with screenshots is in [`docs/Digital_Twin_Team_Guide.docx`](docs/Digital_Twin_Team_Guide.docx).
 
 ## Run it on your computer (optional)
 
