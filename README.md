@@ -12,7 +12,7 @@ This is our digital twin for the CNC assignment. The page connects to the Metalo
 
 Click this link (you need to be signed in to GitHub):
 
-### 👉 https://codespaces.new/diegobethancourth/digital_twin_diego
+**https://codespaces.new/diegobethancourth/digital_twin_diego**
 
 1. Click **Create codespace**.
 2. Wait about one minute. The server starts by itself.
